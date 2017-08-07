@@ -1,20 +1,25 @@
 #include"httpd.h"
 //print syslog
 extern int epollfd;
-void print_log(const char* errorstr,int status)
+//void print_log(const char* errorstr,int status)
+//{
+//	char* err[] = {
+//		"NOMAL",
+//		"WARING",
+//		"FALAT"
+//		};
+//
+//	openlog("httpd",LOG_PID|LOG_CONS,LOG_USER);
+//
+//	// /var/log/messages
+//	syslog(LOG_INFO,errorstr,err[status]);
+//
+//	closelog();
+//}
+
+void print_log(const char* destion, int level)
 {
-	char* err[] = {
-		"NOMAL",
-		"WARING",
-		"FALAT"
-		};
-
-	openlog("httpd",LOG_PID|LOG_CONS,LOG_USER);
-
-	// /var/log/messages
-	syslog(LOG_INFO,errorstr,err[status]);
-
-	closelog();
+    //打印日志
 }
 
 //listen sock work function
@@ -163,17 +168,7 @@ int send_response(int sock,const char* line,int fd,struct stat st,const char* re
         send(sock,lang,strlen(lang),0);
         send(sock,"\r\n",strlen("\r\n"),0);
 
-
-	//	if(send(sock,responseline,strlen(responseline),0) < 0)
-	//	{
-	//		print_log("resposen send failed!\n",WARING);
-	//		ret = -1;
-	//		return ret;
-	//	}
-	//	
-	//	send(sock,"\r\n",strlen("\r\n"),0);
-
-		if(sendfile(sock,fd,NULL,st.st_size) < 0){
+        if(sendfile(sock,fd,NULL,st.st_size) < 0){
 			print_log("respose file failed!\n",WARING);
 			ret = -2;
 		}
@@ -182,20 +177,162 @@ int send_response(int sock,const char* line,int fd,struct stat st,const char* re
 		return ret;
 }
 
+int dir_deal_cgi(int sock,char* dir)
+{
+    char buf[SIZE];
+        int content_len = -1;
+        char method_env[SIZE/8];
+        char query_string_env[SIZE/4];
+        char dir_env[SIZE/8];
+        char* path = "dir_cgi.sh";
+        
+        clear_header(sock);
+        int input[2];
+        int output[2];
+        
+        pipe(input);
+        pipe(output);
 
+        pid_t id = fork();
+        if(id < 0)
+        {
+            print_log("fork",FALAT);
+            echo_error(sock,500);   
+            return 11;
+        }else if(id == 0){
+            close(input[1]);
+            close(output[0]);
+                    
+            dup2(input[0],0);
+            dup2(output[1],1);
+            close(sock);
+            sprintf(dir_env,"DIR_ENV=%s",dir);
+            putenv(dir_env);
+
+            execl(path,path,NULL);
+            exit(1);
+        }
+
+    else
+        {
+            close(input[0]);
+            close(output[1]);
+            char* arr = (char*)malloc(1024*1024);
+            memset(arr,'\0',sizeof(char)*1024*1024);
+            
+            char ch = '\0';
+            int i = 0;
+            while(read(output[0],&ch,1) > 0)
+            {
+                arr[i++]=ch;
+            }
+
+            const char* status_line = "HTTP/1.1 200 OK\r\n";
+            send(sock,status_line,strlen(status_line),0);
+            const char* connection = "Connection:keep-alive\r\n";
+            send(sock,connection,strlen(connection),0);
+
+            char *content_lenth =(char*)malloc(100);
+            sprintf(content_lenth,"Content-length:%d\r\n", i);
+            send(sock,content_lenth,strlen(content_lenth),0);
+
+            const char* content_type = "Content-Type:text/html;Charset=utf-8\r\n";
+            send(sock,content_type,strlen(content_type),0);
+            const char* lang = "Accept-Language: zh-cn\r\n";
+            send(sock,lang,strlen(lang),0);
+            send(sock,"\r\n",strlen("\r\n"),0);
+
+            send(sock,arr,i,0);
+            waitpid(id,NULL,0);
+            print_log("father is go done..", FALAT);
+    }
+    return 0; 
+}
+
+int dir_deal(int sock, struct stat st, char* pathline)
+{
+
+    int ret = 0;
+	clear_header(sock);
+    int size = 0;
+    char* result=(char*)malloc(1024*1024*1024);
+    memset(result, '\0', 1024*1024*1024);
+
+    printf("runing dir_deal\n");
+    struct dirent *p_dirent;
+    DIR *p_Dir ;  //定义一个DIR类的指针
+    p_Dir=opendir(pathline); //  opendir方法打开path目录，并将地址付给pDir指针
+     
+     char* filename = (char*)malloc(100);
+     while((p_dirent=readdir(p_Dir)))
+     {
+        if(strcmp(p_dirent->d_name,".")==0 || strcmp(p_dirent->d_name,"..")==0)     
+         {
+             continue;
+         }
+         memset(filename,'\0',100);
+         sprintf(filename,"<a href=\"%s/%s\">%s</a><br>",pathline,p_dirent->d_name,p_dirent->d_name);
+         printf("%s\n",filename);
+         strcat(result,filename);
+     }
+     size = strlen(result);
+     closedir(p_Dir);
+    
+    const char* status_line = "HTTP/1.1 200 OK\r\n";
+    send(sock,status_line,strlen(status_line),0);
+    const char* connection = "Connection:keep-alive\r\n";
+    send(sock,connection,strlen(connection),0);
+    
+    char *content_lenth =(char*)malloc(100);
+    sprintf(content_lenth,"Content-length:%d\r\n", size);
+    send(sock,content_lenth,strlen(content_lenth),0);
+    
+    const char* content_type = "Content-Type:text/html;Charset=utf-8\r\n";
+    send(sock,content_type,strlen(content_type),0);
+    const char* lang = "Accept-Language: zh-cn\r\n";
+    send(sock,lang,strlen(lang),0);
+    send(sock,"\r\n",strlen("\r\n"),0);
+    
+    send(sock,result,size,0);
+    return ret;
+}
 
 //deal cgi  read line get / http/1.0
-int cgi_deal(int sock,char* dir)
+int cgi_deal(int sock,char* method, char* path, char* ptr)
 {
 	char buf[SIZE];
 	int content_len = -1;
 	char method_env[SIZE/8];
 	char query_string_env[SIZE/4];
-	char dir_env[SIZE/8];
-	char* path = "dir_cgi.sh";
-    
-    clear_header(sock);
+	char content_len_env[SIZE/8];
 
+	if(strcasecmp(method,"GET") == 0)//get
+	{
+		clear_header(sock);
+	}else{ //post
+		int ret = 0;
+		do{
+			ret = readline(sock,buf,sizeof(buf));
+			printf("DEBUG5: post read buff is %s\n",buf);
+			if(ret > 0 && \
+				strncasecmp(buf,"Content-Length: ",16) == 0){
+					content_len = atoi(buf+16);
+					printf("DEBUG6: content_len is %d\n",content_len);
+				}
+		}while(ret != 1 && strcmp(buf,"\n") != 0);
+		
+		printf("DEBUG4: content-length: %d",content_len);
+		//1.maybe get content_len
+		//2.must clean header
+		//Content_Lenth 代表数据长度 
+		//处理粘包问题，1.定行，空行，Content_Lenth  指定长度
+		if(content_len < 0)
+		{
+			printf("DEBUG2: content-length: %d",content_len);
+			echo_error(sock,403);
+			return 10;
+		}//fi
+	}//else
 	//Get 和 Post 的请求行和请求包头和空行都读取了；
 	//tell Mozila this is a html;
 
@@ -222,8 +359,20 @@ int cgi_deal(int sock,char* dir)
 		close(sock);		//child proc close the sock;
 
 		//程序替换只替换目标代码和数据，不会改变环境变量
-		sprintf(dir_env,"DIR_ENV=%s",dir);
-		putenv(dir_env);
+		
+		//arguments through env val pass;
+		sprintf(method_env,"METHOD=%s",method);
+		putenv(method_env);
+
+		if(strcasecmp(method,"get") == 0)
+		{	 //get
+			sprintf(query_string_env,"QUERY_STRING=%s",ptr);
+			putenv(query_string_env);
+		}else//post
+		{
+			sprintf(content_len_env,"CONTENT_LENGTH=%d",content_len);
+			putenv(content_len_env);
+		}//else
 
 		execl(path,path,NULL);
 		exit(1);
@@ -234,6 +383,19 @@ int cgi_deal(int sock,char* dir)
 		close(input[0]);
 		close(output[1]);
 
+		//  ???  !!!
+		if(strcasecmp(method,"POST") == 0)
+		{
+			int i = 0;
+			char ch = '\0';
+
+			for(; i < content_len; ++i)
+			{
+				recv(sock,&ch,1,0);
+				write(input[1],&ch,1);
+			}
+		}
+		
         char* arr = (char*)malloc(1024*1024);
         memset(arr,'\0',sizeof(char)*1024*1024);
 
@@ -264,7 +426,6 @@ int cgi_deal(int sock,char* dir)
         send(sock,arr,i,0);
 		waitpid(id,NULL,0);
         print_log("father is go done..", FALAT);
-		//close(sock);
 	}
     return 0; 
 }
@@ -370,28 +531,28 @@ int headler_sock(int sock)
 		}
 		path[i] = '\0';
 		
-	//	char* tmp = uri_point;
-	//	while(*tmp != ' ')
-	//	{
-	//		tmp++;
-	//	}
-	//
-	//	*tmp = '\0';
+		char* tmp = uri_point;
+		while(*tmp != ' ')
+		{
+			tmp++;
+		}
+	
+		*tmp = '\0';
 	}
 	
 
 	//method is post?
-//	if(strcasecmp(method,"POST") == 0)
-//	{
-//		int i = 0;
-//		while(*uri_point != ' ')
-//		{
-//			path[i++] = *uri_point++;
-//		}
-//
-//		path[i] = '\0';
-//		printf("DEBUG: POST path is %s\n",path);
-//	}
+	if(strcasecmp(method,"POST") == 0)
+	{
+		int i = 0;
+		while(*uri_point != ' ')
+		{
+			path[i++] = *uri_point++;
+		}
+
+		path[i] = '\0';
+		printf("DEBUG: POST path is %s\n",path);
+	}
 	
 
 	char pathline[SIZE]; //keep path
@@ -399,12 +560,12 @@ int headler_sock(int sock)
 	sprintf(pathline,"wwwroot%s",path);
 
 	struct stat st;   //存储文件信息 
-//	i = strlen(pathline);
-//	if(pathline[i - 1] == '/')
-//	{
-//		// wwwroot/ > return index.html
-//		strcat(pathline,"index.html");
-//	}
+	i = strlen(pathline);
+	if(pathline[i - 1] == '/')
+	{
+		// wwwroot/ > return index.html
+		strcat(pathline,"index.html");
+	}
 
     printf("path is %s\n", pathline);
 	if(stat(pathline,&st) < 0)
@@ -413,25 +574,27 @@ int headler_sock(int sock)
 		echo_error(sock,404);
 		ret = 2;
 		return ret;
-	}else if(S_ISDIR(st.st_mode)){
-		//request a dir
-		//sprintf(pathline,"/index.html");
-        printf("%s ISDIR is running cgi_deal\n", pathline);
-        print_log("ISDIR is running cgi_deal\n", FALAT);
-        cgi_deal(sock, pathline);
+	}
+    else if(S_ISDIR(st.st_mode)){
+        printf("%s ISDIR is running dir_deal\n", pathline);
+        dir_deal_cgi(sock, pathline);
         return 0;
 	}
     else if(S_ISREG(st.st_mode))
 	{
-        print_log("deal_path is running\n", FALAT);
-	    ret = deal_path(sock,st,method,pathline);
-	    if(ret != 0)
-	    {
-	    	print_log("deal_path is failed!\n",FALAT);
-	        goto end;
-	    }
-        print_log("deal is overd\n", FALAT);
-        return 0;
+		 if(st.st_mode&S_IXUSR || st.st_mode&S_IXGRP || st.st_mode&S_IXOTH){
+			//fork + exec
+			cgi = 1;
+		 }
+       // print_log("deal_path is running\n", FALAT);
+	   // ret = deal_path(sock,st,method,pathline);
+	   // if(ret != 0)
+	   // {
+	   // 	print_log("deal_path is failed!\n",FALAT);
+	   //     goto end;
+	   // }
+       // print_log("deal is overd\n", FALAT);
+       // return 0;
 	}
 	else{  
 		echo_error(sock,400);
@@ -439,6 +602,24 @@ int headler_sock(int sock)
 		return ret;
 	}
 
+    if(cgi != 1)
+    {
+        //非动态请求
+	    ret = deal_path(sock,st,method,pathline);
+        if(ret < 0)
+        {
+            print_log("deal_path is fault!\n",FALAT);
+        }
+    }
+    else
+    {
+        //动态请求
+        ret = cgi_deal(sock,method,pathline, uri_point);
+        if(ret < 0)
+        {
+            print_log("cgi_deal is fault\n", FALAT);
+        }
+    }
 end:
 	return ret; 
 }
