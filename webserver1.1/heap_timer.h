@@ -139,6 +139,7 @@ public:
             return;
         }
         /* 仅仅将目标定时器的回调函数置为NULL，即所谓的延迟销毁，这将节省真正销毁定时器的开销，但这样做容易使数组膨胀 */
+        cout<<"del_timer is running"<<endl;
         timer->cb_func = NULL;
     }
 
@@ -167,12 +168,18 @@ public:
         }
     }
 
+    void mod_timer(heap_timer* timer)
+    {
+        timer->expire = time(NULL)+10;
+    }
+
     /* 心博函数 */
     void tick()
     {
         heap_timer* tmp = array[0];
         time_t cur = time(NULL);
-        while(!empty())
+        cout<<"heapsize is : "<<empty()<<endl;
+        while(empty() == 0)
         {
             if(!tmp)
             {
@@ -184,8 +191,9 @@ public:
                 break;
             }
             /* 否则就执行堆顶计时器的任务 */
-            if(array[0]->cb_func)
+            if(array[0]->cb_func != NULL)
             {
+                cout<<"do this heap"<<endl;
                 array[0]->cb_func(array[0]->user_data);
             }
 
@@ -195,7 +203,7 @@ public:
         }
     }
 
-    bool empty() const{return cur_size;}
+    bool empty() const{return cur_size == 0;}
 
 private:
     /* 最小堆的下调操作 */
@@ -250,4 +258,3 @@ private:
 };
 
 #endif
-
